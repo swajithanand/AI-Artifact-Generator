@@ -1,0 +1,5 @@
+{
+  "name": "AI Artifact Generator",
+  "description": "An AI-powered tool to generate software development artifacts like user stories, bug reports, features, and epics based on user-provided context. It helps streamline the documentation process for development teams.",
+  "requestFramePermissions": []
+}
