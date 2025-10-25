@@ -14,8 +14,40 @@ import re
 load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
 from fastapi import FastAPI, Depends, HTTPException # <--- ADD HTTPException
 from fastapi.middleware.cors import CORSMiddleware 
+
+ Temporarily comment out all imports that rely on database/strategies
+# from strategies import get_orchestrator, AIOrchestrator
+# from database import create_db_and_tables, get_session, Artifact
+# from models import ArtifactRequest, ArtifactResponse, StructuredArtifact
+
+app = FastAPI(title="Health Check App")
+
+# CORS is kept for network test
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# --- NO STARTUP EVENTS ---
+
+# --- BARE MINIMUM HEALTH CHECK ROUTE ---
+@app.get("/")
+def health_check():
+    return {"status": "ok", "message": "Server is running, but logic is disabled."}
+
+# @app.post("/api/generate-artifact") # TEMPORARILY DISABLED
+# async def generate_artifact_route():
+#     pass
 # ... other imports ...
 import logging # <--- ADD LOGGING IMPORT
+
+# main.py (TEMPORARY DEBUGGING VERSION)
+
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
 # Setup logging
 logging.basicConfig(level=logging.DEBUG)
