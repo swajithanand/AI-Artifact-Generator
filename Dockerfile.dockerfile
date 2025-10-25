@@ -19,4 +19,4 @@ COPY . .
 EXPOSE 8080
 
 # Command to run the application using the $PORT environment variable
-CMD ["gunicorn", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "main:app", "--bind", "0.0.0.0:8080"]
+CMD ["gunicorn", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "main:app"]
