@@ -1,7 +1,9 @@
 # Dockerfile
 
 # Use a clean, known Python image (3.11 is a good, stable version)
-FROM python:3.11-slim
+FROM python:3.11.8-bullseye
+# Set environment variables
+ENV PYTHONUNBUFFERED True
 
 # Set the working directory inside the container
 WORKDIR /app
@@ -19,4 +21,5 @@ COPY . .
 EXPOSE 8080
 
 # Command to run the application using the $PORT environment variable
-CMD ["gunicorn", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "main:app", "--bind", "0.0.0.0:8080"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+#CMD ["gunicorn", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "main:app", "--bind", "0.0.0.0:8080"]
