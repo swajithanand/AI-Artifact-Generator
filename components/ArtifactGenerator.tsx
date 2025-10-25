@@ -19,7 +19,7 @@ interface HistoryItem {
 }
 
 // NOTE: THE BACKEND IS RUNNING ON PORT 8000
-const API_BASE_URL = 'http://localhost:8000/api'; 
+const API_BASE_URL = 'ai-artifact-generator-production.up.railway.app'; 
 
 import { CogIcon, CopyIcon, ExportIcon } from './icons'; 
 
