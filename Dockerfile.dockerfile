@@ -1,7 +1,8 @@
 # Dockerfile
 
 # Use a clean, known Python image (3.11 is a good, stable version)
-FROM python:3.11.8-bullseye
+#FROM python:3.11.8-bullseye
+FROM python:3.10 
 # Set environment variables
 #ENV PYTHONUNBUFFERED True
 #FROM python:3.10.14-slim 
