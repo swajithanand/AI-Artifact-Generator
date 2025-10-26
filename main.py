@@ -37,10 +37,10 @@ app.add_middleware(
 )
 
 # Startup Event: Create DB Tables
-@app.on_event("startup")
-def on_startup():
-    create_db_and_tables()
-    logger.info("Database tables created successfully")
+#@app.on_event("startup")
+#def on_startup():
+ #   create_db_and_tables()
+  #  logger.info("Database tables created successfully")
 
 # Persistence Service
 class PersistenceService:
