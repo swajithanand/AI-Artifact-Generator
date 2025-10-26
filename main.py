@@ -22,6 +22,12 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="AI Artifact Generator Backend")
 
 # CORS Configuration
+# NOTE: The list of allowed origins must include your new Vercel domain!
+allowed_origins = [
+    "https://ai-artifact-generator-swajiths-projects.vercel.app", # <--- THE LIVE FRONTEND
+    "http://localhost:3000", # Still needed for local testing
+]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # For production, replace with specific origins
