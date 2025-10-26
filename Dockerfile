@@ -16,7 +16,6 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
 
 COPY . .
 
-# Make start script executable
-RUN chmod +x start.sh
+EXPOSE 8080
 
-CMD ["./start.sh"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
