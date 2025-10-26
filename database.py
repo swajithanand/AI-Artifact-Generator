@@ -8,6 +8,7 @@ from sqlalchemy.schema import PrimaryKeyConstraint
 from sqlalchemy.dialects.postgresql import JSONB 
 from urllib.parse import quote_plus # <--- NEW IMPORT for clean encoding
 from sqlalchemy.dialects.postgresql import JSONB
+import os
 
 # --- REPLACE THIS LINE ---
 # IMPORTANT: Replace the placeholder with your actual Supabase Connection String.
