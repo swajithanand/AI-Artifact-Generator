@@ -5,11 +5,27 @@ from datetime import datetime
 from typing import Optional
 from fastapi import Depends
 from sqlalchemy.schema import PrimaryKeyConstraint
+from sqlalchemy.dialects.postgresql import JSONB 
+from urllib.parse import quote_plus # <--- NEW IMPORT for clean encoding
 from sqlalchemy.dialects.postgresql import JSONB
 
 # --- REPLACE THIS LINE ---
 # IMPORTANT: Replace the placeholder with your actual Supabase Connection String.
-DATABASE_URL = r"postgresql://postgres:Sw%40jith%4092@db.mxkgpfayipntrbfyqmdh.supabase.co:5432/postgres"
+#DATABASE_URL = r"postgresql://postgres:Sw%40jith%4092@db.mxkgpfayipntrbfyqmdh.supabase.co:5432/postgres"
+
+# --- Configuration (Read individual parameters from Render variables) ---
+DB_HOST = os.getenv("DB_HOST", "localhost") 
+DB_USER = os.getenv("DB_USER", "postgres")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "password") 
+DB_PORT = os.getenv("DB_PORT", "5432")
+DB_NAME = "postgres" # Supabase default
+
+# Build the connection string using the SAFE quote_plus function
+# The quote_plus function handles the encoding of the password correctly.
+DATABASE_URL = f"postgresql://{DB_USER}:{quote_plus(DB_PASSWORD)}@{DB_HOST}:{DB_PORT}/{DB_NAME}" 
+
+# Setup the database engine
+#engine = create_engine(DATABASE_URL, echo=False) 
 # -------------------------
 
 # Setup the database engine
