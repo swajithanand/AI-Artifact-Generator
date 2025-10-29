@@ -37,10 +37,11 @@ app.add_middleware(
 )
 
 # Startup Event: Create DB Tables
-@app.on_event("startup")
-def on_startup():
-    create_db_and_tables()
-    logger.info("Database tables created successfully")
+#@app.on_event("startup")
+#def on_startup():
+  #  create_db_and_tables()
+   
+   # logger.info("Database tables created successfully")
 
 # Persistence Service
 class PersistenceService:
@@ -157,9 +158,20 @@ def parse_raw_ai_output(artifact_type: str, raw_output: str) -> StructuredArtifa
 @app.get("/")
 def health_check():
     return {"status": "ok", "message": "AI Artifact Generator API is running"}
+@app.get("/history")
+def get_artifact_history(persistence_service: PersistenceService = Depends()):
+    try:
+        history = persistence_service.get_history()
+        return {"status": "success", "data": history}
+    except Exception as e:
+        logger.error(f"Error fetching artifact history: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to fetch artifact history")
+    pass
 
 # Main artifact generation route
-@app.post("/api/generate-artifact", response_model=ArtifactResponse)
+#@app.post("/api/generate-artifact", response_model=ArtifactResponse)
+# FIX: Remove the '/api' from the route path itself
+@app.post("/generate-artifact", response_model=ArtifactResponse)
 async def generate_artifact_route(
     request: ArtifactRequest,
     orchestrator: AIOrchestrator = Depends(get_orchestrator),
@@ -186,3 +198,4 @@ async def generate_artifact_route(
     except Exception as e:
         logger.error(f"Critical Error in artifact generation: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Backend processing failed: {str(e)}")
+    pass
