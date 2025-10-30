@@ -26,11 +26,15 @@ app = FastAPI(title="AI Artifact Generator Backend")
 allowed_origins = [
     "https://ai-artifact-generator-swajiths-projects.vercel.app", # <--- THE LIVE FRONTEND
     "http://localhost:3000", # Still needed for local testing
+    "http://127.0.0.1:3000",   # Frontend Development (Alternate Address)
+    "http://localhost:8000",   # Backend Self-Reference
+    "http://127.0.0.1:8000",   # Backend Self-Reference (Alternate)
 ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # For production, replace with specific origins
+    #allow_origins=["*"],  # For production, replace with specific origins
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

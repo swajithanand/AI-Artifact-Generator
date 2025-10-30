@@ -19,8 +19,9 @@ interface HistoryItem {
 }
 
 // NOTE: THE BACKEND IS RUNNING ON PORT 8000
-const API_BASE_URL = 'https://artifact-generator-backend-58653101019.us-central1.run.app';
-
+const API_BASE_URL = 'https://artifact-generator-backend-58653101019.us-central1.run.app/';
+// USE THE LOCAL URL FOR LOCAL TESTING!
+//const API_BASE_URL = 'http://localhost:8000';
 import { CogIcon, CopyIcon, ExportIcon } from './icons'; 
 
 // --- Input Section Component (Updated for Light Mode) ---
