@@ -19,7 +19,7 @@ interface HistoryItem {
 }
 
 // NOTE: THE BACKEND IS RUNNING ON PORT 8000
-const API_BASE_URL = 'https://ai-artifact-generator-api-live.onrender.com/';
+const API_BASE_URL = 'https://artifact-generator-backend-58653101019.us-central1.run.app';
 
 import { CogIcon, CopyIcon, ExportIcon } from './icons'; 
 
