@@ -46,18 +46,18 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="AI Artifact Generator Backend", lifespan=lifespan) 
 
 # CORS Configuration
-allowed_origins = [
+origins = [
     "https://ai-artifact-generator-swajiths-projects.vercel.app", # Vercel Live
     "http://localhost:3000",   # Local Frontend
     "http://127.0.0.1:3000",   # Local Frontend (Alternate)
-    "http://localhost:8000",   # Local Backend
-    "http://127.0.0.1:8000",   # Local Backend (Alternate)
-    "*" # Final fallback for Cloud Run ingress testing
+    #"http://localhost:8000",   # Local Backend
+    #"http://127.0.0.1:8000",   # Local Backend (Alternate)
+    #"*" # Final fallback for Cloud Run ingress testing
 ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins, 
+    allow_origins=origins, 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -174,3 +174,8 @@ async def generate_artifact_route(
     except Exception as e:
         logger.error(f"Critical Error in artifact generation: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Backend processing failed: {str(e)}")
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.getenv("PORT", 8080))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
+    
