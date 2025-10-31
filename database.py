@@ -1,44 +1,45 @@
-# database.py
+# database.py - FINAL CLEANED VERSION
 
 from sqlmodel import SQLModel, Field, Session, create_engine
 from datetime import datetime
 from typing import Optional
 from fastapi import Depends
-from sqlalchemy.schema import PrimaryKeyConstraint
 from sqlalchemy.dialects.postgresql import JSONB 
-from urllib.parse import quote_plus # <--- NEW IMPORT for clean encoding
-from sqlalchemy.dialects.postgresql import JSONB
+from urllib.parse import quote_plus 
 import os
+from sqlalchemy.schema import PrimaryKeyConstraint
 
-# --- REPLACE THIS LINE ---
-# IMPORTANT: Replace the placeholder with your actual Supabase Connection String.
-#DATABASE_URL = r"postgresql://postgres:Sw%40jith%4092@db.mxkgpfayipntrbfyqmdh.supabase.co:5432/postgres"
+# --- Configuration (Read individual parameters from Cloud Run environment) ---
+# NOTE: os.getenv will return None if the variable is NOT set.
+DB_HOST = os.getenv("DB_HOST") 
+DB_USER = os.getenv("DB_USER")
+DB_PASSWORD = os.getenv("DB_PASSWORD") 
+DB_PORT = os.getenv("DB_PORT")
+DB_NAME = "postgres" 
 
-# --- Configuration (Read individual parameters from Render variables) ---
-DB_HOST = os.getenv("DB_HOST", "localhost") 
-DB_USER = os.getenv("DB_USER", "postgres")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "password") 
-DB_PORT = os.getenv("DB_PORT", "5432")
-DB_NAME = "postgres" # Supabase default
+# FALLBACK CHECK: If individual variables are not set, assume the full URL is used.
+# This prevents the application from crashing in production.
+FULL_DB_URL_FROM_ENV = os.getenv("DATABASE_URL")
 
-# Build the connection string using the SAFE quote_plus function
-# The quote_plus function handles the encoding of the password correctly.
-DATABASE_URL = f"postgresql://{DB_USER}:{quote_plus(DB_PASSWORD)}@{DB_HOST}:{DB_PORT}/{DB_NAME}" 
+# Build the connection string using the safest method
+if FULL_DB_URL_FROM_ENV:
+    # Use the full URL (assumes it's correctly formatted/encoded)
+    DATABASE_URL = FULL_DB_URL_FROM_ENV
+else:
+    # Use the individual parameters and safely encode the password
+    # This requires all individual DB_* variables to be set.
+    if not all([DB_HOST, DB_USER, DB_PASSWORD, DB_PORT]):
+        # This should ONLY happen if you are testing locally without the .env file
+        # We will use a default error message to prevent a crash
+        raise ValueError("Database credentials are not fully set in the environment variables.")
+        
+    DATABASE_URL = f"postgresql://{DB_USER}:{quote_plus(DB_PASSWORD)}@{DB_HOST}:{DB_PORT}/{DB_NAME}" 
 
 # Setup the database engine
-#engine = create_engine(DATABASE_URL, echo=False) 
-# -------------------------
-
-# Setup the database engine
-# echo=True prints the SQL commands executed, helpful for debugging
 engine = create_engine(DATABASE_URL, echo=False) 
 
 # --- 1. Database Model ---
 class Artifact(SQLModel, table=True):
-    """Defines the structure of the table that will hold all generated artifacts."""
-    
-    # FIX: Move the dictionary to the end and make the whole thing a tuple.
-    # The dictionary of arguments (like 'schema') must be the last element.
     __table_args__ = ({'schema': 'public'}, ) 
     
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -49,7 +50,7 @@ class Artifact(SQLModel, table=True):
 
 # --- 2. Database Session Dependency ---
 def create_db_and_tables():
-    """Called at startup to create tables in Supabase if they don't exist."""
+    """Called to create tables in Supabase if they don't exist."""
     SQLModel.metadata.create_all(engine)
 
 def get_session():
