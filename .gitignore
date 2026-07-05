@@ -31,3 +31,4 @@ __pycache__/
 *.njsproj
 *.sln
 *.sw?
+.claude/
