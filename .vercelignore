@@ -1,0 +1,8 @@
+# Backend files live on Render — exclude them so Vercel builds only the
+# Vite frontend and doesn't try to "uv pip install" Python dependencies.
+*.py
+requirements.txt
+render.yaml
+Procfile
+Dockerfile.dockerfile
+__pycache__/
