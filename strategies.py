@@ -85,6 +85,10 @@ class GeminiProvider(AIProviderStrategy):
     def _translate(self, e: Exception) -> Exception:
         from google.genai.errors import APIError
         if isinstance(e, APIError):
+            # Google reports invalid keys as HTTP 400 API_KEY_INVALID, not 401
+            message = str(e)
+            if "API_KEY_INVALID" in message or "API key not valid" in message:
+                return ProviderAuthError()
             mapped = _classify_status(getattr(e, "code", None) or getattr(e, "status_code", None))
             if mapped:
                 return mapped
