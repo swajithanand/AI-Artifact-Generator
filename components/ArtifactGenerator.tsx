@@ -1,13 +1,13 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { ArtifactType, HistoryItem } from '../types';
+import { ArtifactType, HistoryItem, LLMSettings, PROVIDER_CATALOG } from '../types';
+import { loadLLMSettings, saveLLMSettings, clearLLMSettings, llmHeaders } from '../llmSettings';
+import { API_BASE_URL } from '../config';
+import SettingsModal from './SettingsModal';
 import { CogIcon, CopyIcon, ExportIcon } from './icons';
 
-// NOTE: THE BACKEND IS RUNNING ON PORT 8000
-// FINAL URL FOR LIVE DEPLOYMENT (no trailing slash — paths are appended below)
-const API_BASE_URL = 'https://artifact-generator-backend-58653101019.us-central1.run.app';
-// USE THE LOCAL URL FOR LOCAL TESTING!
-//const API_BASE_URL = 'http://localhost:8000';
+// Errors whose message is safe to show to the user verbatim
+class UserFacingError extends Error {}
 
 // Badge colors per artifact type, used in the history list
 const TYPE_BADGE_STYLES: Record<ArtifactType, string> = {
@@ -91,6 +91,17 @@ const ArtifactGenerator: React.FC = () => {
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const [error, setError] = useState<string>('');
     const [copySuccess, setCopySuccess] = useState<string>('');
+    const [llmSettings, setLlmSettings] = useState<LLMSettings | null>(() => loadLLMSettings());
+    const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
+
+    const handleSaveSettings = useCallback((settings: LLMSettings | null) => {
+        if (settings) {
+            saveLLMSettings(settings);
+        } else {
+            clearLLMSettings();
+        }
+        setLlmSettings(settings);
+    }, []);
 
     // --- History Fetching Logic ---
     const fetchHistory = useCallback(async () => {
@@ -131,7 +142,7 @@ const ArtifactGenerator: React.FC = () => {
         try {
             const response = await fetch(`${API_BASE_URL}/generate-artifact`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', ...llmHeaders(llmSettings) },
                 body: JSON.stringify({
                     business_use_case: scenario,
                     persona: persona,
@@ -143,6 +154,10 @@ const ArtifactGenerator: React.FC = () => {
             const data = await response.json();
 
             if (!response.ok) {
+                // 401/429 carry curated, user-friendly messages from our backend
+                if ((response.status === 401 || response.status === 429) && data.detail) {
+                    throw new UserFacingError(data.detail);
+                }
                 throw new Error(data.detail || `HTTP error! Status: ${response.status}`);
             }
 
@@ -152,11 +167,13 @@ const ArtifactGenerator: React.FC = () => {
 
         } catch (error) {
             console.error("Generation Error:", error);
-            setError('Something went wrong while generating your artifact. Please try again in a moment.');
+            setError(error instanceof UserFacingError
+                ? error.message
+                : 'Something went wrong while generating your artifact. Please try again in a moment.');
         } finally {
             setIsLoading(false);
         }
-    }, [scenario, persona, techInfo, artifactType, isLoading, fetchHistory]);
+    }, [scenario, persona, techInfo, artifactType, isLoading, fetchHistory, llmSettings]);
 
     // --- UI Actions ---
     const handleCopy = () => {
@@ -206,10 +223,35 @@ const ArtifactGenerator: React.FC = () => {
         <div className="p-4 sm:p-6 lg:p-8 flex flex-col h-screen bg-gray-50 text-gray-800">
             <header className="flex justify-between items-center pb-4 border-b border-gray-200 mb-6">
                 <h1 className="text-2xl font-bold text-black">AI Artifact Generator</h1>
-                <button aria-label="Settings" className="text-gray-500 hover:text-gray-900 transition-colors">
-                    <CogIcon />
-                </button>
+                <div className="flex items-center space-x-3">
+                    <button
+                        onClick={() => setIsSettingsOpen(true)}
+                        className={`hidden sm:inline-flex items-center px-3 py-1.5 text-xs font-semibold rounded-full transition-colors ${
+                            llmSettings
+                                ? 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200'
+                                : 'bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200'
+                        }`}
+                    >
+                        {llmSettings
+                            ? `${PROVIDER_CATALOG[llmSettings.provider].label} · ${llmSettings.model}`
+                            : 'No API key — add yours'}
+                    </button>
+                    <button
+                        onClick={() => setIsSettingsOpen(true)}
+                        aria-label="Settings"
+                        className="text-gray-500 hover:text-gray-900 transition-colors"
+                    >
+                        <CogIcon />
+                    </button>
+                </div>
             </header>
+
+            <SettingsModal
+                isOpen={isSettingsOpen}
+                settings={llmSettings}
+                onSave={handleSaveSettings}
+                onClose={() => setIsSettingsOpen(false)}
+            />
 
             <main className="flex-grow grid grid-cols-1 lg:grid-cols-10 gap-6 min-h-0">
                 {/* Left Column — inputs */}

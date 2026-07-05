@@ -3,14 +3,15 @@
 import os
 import re
 import logging
+from typing import Optional
 from dotenv import load_dotenv
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session, select
-from contextlib import asynccontextmanager 
+from contextlib import asynccontextmanager
 
 from models import ArtifactRequest, ArtifactResponse, StructuredArtifact
-from strategies import get_orchestrator, AIOrchestrator
+from strategies import build_provider, ProviderAuthError, ProviderRateLimitError
 from database import create_db_and_tables, get_session, Artifact
 
 # --- INITIALIZATION AND CONFIGURATION ---
@@ -18,8 +19,9 @@ from database import create_db_and_tables, get_session, Artifact
 # Load environment variables (will load local .env or cloud vars)
 load_dotenv()
 
-# Setup logging
-logging.basicConfig(level=logging.DEBUG)
+# Setup logging. INFO level on purpose: request headers (which can carry user
+# API keys) must never end up in logs.
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # --- LIFESPAN EVENT HANDLER (Modern FastAPI Startup) ---
@@ -155,25 +157,60 @@ def get_artifact_history(persistence_service: PersistenceService = Depends()):
         logger.error(f"Error fetching artifact history: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to fetch artifact history")
 
+# Key validation route — lets the frontend "Test connection" button verify a
+# user-supplied key with a cheap provider call. The key is used in memory only.
+@app.post("/validate-key")
+def validate_key_route(
+    x_llm_provider: Optional[str] = Header(default=None),
+    x_llm_model: Optional[str] = Header(default=None),
+    x_llm_key: Optional[str] = Header(default=None),
+):
+    if not x_llm_key:
+        raise HTTPException(status_code=400, detail="No API key provided.")
+    provider = build_provider(x_llm_provider, x_llm_model, x_llm_key)
+    try:
+        provider.validate()
+    except ProviderAuthError:
+        raise HTTPException(status_code=401, detail="The provider rejected this API key.")
+    except ProviderRateLimitError:
+        raise HTTPException(status_code=429, detail="This key is currently rate-limited by the provider.")
+    except Exception:
+        logger.error("Key validation failed for provider %s", provider.provider_id, exc_info=True)
+        raise HTTPException(status_code=502, detail="Could not reach the provider to test the key. Check the model name and try again.")
+    return {"status": "ok", "provider": provider.provider_id, "model": provider.model}
+
+
 # Main artifact generation route
 @app.post("/generate-artifact", response_model=ArtifactResponse)
 async def generate_artifact_route(
     request: ArtifactRequest,
-    orchestrator: AIOrchestrator = Depends(get_orchestrator),
-    persistence_service: PersistenceService = Depends()
+    persistence_service: PersistenceService = Depends(),
+    x_llm_provider: Optional[str] = Header(default=None),
+    x_llm_model: Optional[str] = Header(default=None),
+    x_llm_key: Optional[str] = Header(default=None),
 ):
+    provider = build_provider(x_llm_provider, x_llm_model, x_llm_key)
+    logger.info("Generating %s via %s", request.artifact_type, provider.provider_id)
+
     try:
-        logger.debug(f"Received request for type: {request.artifact_type}")
-        
-        raw_ai_output = orchestrator.generate_raw(request)
+        raw_ai_output = provider.generate(request)
+    except ProviderAuthError:
+        raise HTTPException(status_code=401, detail="Your API key was rejected by the provider. Check it in Settings (gear icon).")
+    except ProviderRateLimitError:
+        raise HTTPException(status_code=429, detail="Your API key hit the provider's rate limit. Try again in a moment.")
+    except Exception:
+        # Never echo provider exception text to the client — it can contain
+        # request details. Log server-side, return a generic message.
+        logger.error("Artifact generation failed (provider %s)", provider.provider_id, exc_info=True)
+        raise HTTPException(status_code=500, detail="Artifact generation failed. Please try again.")
+
+    try:
         structured_artifact = parse_raw_ai_output(request.artifact_type, raw_ai_output)
         persistence_service.save_artifact(request.artifact_type, structured_artifact)
-        
         return ArtifactResponse(status="success", artifact=structured_artifact)
-
-    except Exception as e:
-        logger.error(f"Critical Error in artifact generation: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Backend processing failed: {str(e)}")
+    except Exception:
+        logger.error("Post-processing/persistence failed", exc_info=True)
+        raise HTTPException(status_code=500, detail="The artifact was generated but could not be saved. Please try again.")
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8080))

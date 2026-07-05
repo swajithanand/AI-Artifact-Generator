@@ -1,39 +1,63 @@
-# strategies.py
+# strategies.py — provider registry for bring-your-own-key (BYOK) generation.
+#
+# SECURITY CONTRACT: user API keys arrive per-request, live only in memory for
+# the duration of that request, and are NEVER logged or persisted anywhere.
 
-from abc import ABC, abstractmethod
-from models import ArtifactRequest
-from typing import Dict
-from fastapi import Depends
 import os
-from google import genai
-from google.genai.errors import APIError # Import for error handling
+import re
+from abc import ABC, abstractmethod
+from typing import Optional
 
-# --- Configuration (Model and API Key) ---
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") # Read the new key
-GEMINI_MODEL = "gemini-2.5-flash" # Fast, powerful model
+from fastapi import HTTPException
 
-if not GEMINI_API_KEY:
-    print("\n--- WARNING: GEMINI_API_KEY environment variable is NOT SET! ---")
-    print("--- Using SIMULATED responses until the key is configured. ---")
+from models import ArtifactRequest
+
+# Server-side fallback key (optional). If unset, users must bring their own key.
+SERVER_GEMINI_KEY = os.getenv("GEMINI_API_KEY")
+
+DEFAULT_MODELS = {
+    "gemini": "gemini-2.5-flash",
+    "openai": "gpt-4o-mini",
+    "anthropic": "claude-haiku-4-5",
+}
+
+MAX_KEY_LENGTH = 256
+MODEL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,100}$")
 
 
-# --- 1. The Strategy Interface (No change needed) ---
+class ProviderAuthError(Exception):
+    """The provider rejected the API key."""
+
+
+class ProviderRateLimitError(Exception):
+    """The provider rate-limited or exhausted the key's quota."""
+
+
 class AIProviderStrategy(ABC):
+    provider_id: str = ""
+
+    def __init__(self, api_key: str, model: Optional[str] = None):
+        self.api_key = api_key
+        self.model = model or DEFAULT_MODELS[self.provider_id]
+
     @abstractmethod
     def generate(self, inputs: ArtifactRequest) -> str:
-        pass
-        
+        """Returns the raw text of the generated artifact."""
+
+    @abstractmethod
+    def validate(self) -> None:
+        """Cheap call that raises ProviderAuthError if the key is bad."""
+
     def _construct_prompt(self, inputs: ArtifactRequest) -> str:
-        """Constructs the detailed prompt for the Gemini model."""
         prompt = f"""
-        You are an expert Agile Product Owner. Your task is to generate a comprehensive {inputs.artifact_type} 
+        You are an expert Agile Product Owner. Your task is to generate a comprehensive {inputs.artifact_type}
         based on the provided details. Output the artifact in a format that is easy to parse.
 
         [INSTRUCTIONS]
         - Title: Be concise and descriptive.
         - For a User Story: Use the format "As a... I want... so that..." and separate Acceptance Criteria (AC).
         - The response MUST start with a line containing the artifact's Title (e.g., "# Epic Title: ...")
-        
+
         [USER INPUTS]
         - ARTIFACT TYPE: {inputs.artifact_type}
         - BUSINESS CASE: {inputs.business_use_case}
@@ -42,50 +66,146 @@ class AIProviderStrategy(ABC):
         """
         return prompt
 
-# --- 2. Concrete Strategy (LIVE GEMINI IMPLEMENTATION) ---
-class GeminiStrategy(AIProviderStrategy):
-    """
-    Live implementation for the Google Gemini API.
-    """
-    def __init__(self):
-        # Initialize client here. It will automatically use the GEMINI_API_KEY.
-        self.client = genai.Client(api_key=GEMINI_API_KEY)
+
+def _classify_status(status_code: Optional[int]) -> Optional[Exception]:
+    if status_code in (401, 403):
+        return ProviderAuthError()
+    if status_code == 429:
+        return ProviderRateLimitError()
+    return None
+
+
+class GeminiProvider(AIProviderStrategy):
+    provider_id = "gemini"
+
+    def _client(self):
+        from google import genai
+        return genai.Client(api_key=self.api_key)
+
+    def _translate(self, e: Exception) -> Exception:
+        from google.genai.errors import APIError
+        if isinstance(e, APIError):
+            mapped = _classify_status(getattr(e, "code", None) or getattr(e, "status_code", None))
+            if mapped:
+                return mapped
+        return e
 
     def generate(self, inputs: ArtifactRequest) -> str:
-        prompt = self._construct_prompt(inputs)
-
-        if not GEMINI_API_KEY:
-            # Fallback to a simple simulation if key is missing
-            return f"# Title: Simulated {inputs.artifact_type} - Key Missing\nUser Story: As a developer, I want to use a simulated response so that the application doesn't crash."
-
         try:
-            # REAL API CALL
-            response = self.client.models.generate_content(
-                model=GEMINI_MODEL,
-                contents=prompt
+            response = self._client().models.generate_content(
+                model=self.model,
+                contents=self._construct_prompt(inputs),
             )
-            # Gemini's response is in response.text
             return response.text
-
-        except APIError as e:
-            # Catch API-specific errors (400 invalid request, etc.)
-            raise Exception(f"Gemini API Error: Details: {str(e)}")
         except Exception as e:
-            # Catch network or other errors
-            raise Exception(f"Gemini Network/Client Error: {str(e)}")
+            raise self._translate(e) from None
+
+    def validate(self) -> None:
+        try:
+            self._client().models.get(model=self.model)
+        except Exception as e:
+            raise self._translate(e) from None
 
 
-# --- 3. The Orchestrator Class and Dependency (SWITCHED) ---
-class AIOrchestrator:
-    """Manages which AI Strategy is active."""
-    def __init__(self):
-        # *** SWITCHED TO GEMINI STRATEGY ***
-        self._strategy = GeminiStrategy()
-        print("--- Backend Initialized with LIVE GeminiStrategy ---")
+class OpenAIProvider(AIProviderStrategy):
+    provider_id = "openai"
 
-    def generate_raw(self, inputs: ArtifactRequest) -> str:
-        return self._strategy.generate(inputs)
+    def _client(self):
+        import openai
+        return openai.OpenAI(api_key=self.api_key)
 
-# Dependency to provide the orchestrator instance
-def get_orchestrator() -> AIOrchestrator:
-    return AIOrchestrator()
+    def _translate(self, e: Exception) -> Exception:
+        import openai
+        if isinstance(e, openai.AuthenticationError) or isinstance(e, openai.PermissionDeniedError):
+            return ProviderAuthError()
+        if isinstance(e, openai.RateLimitError):
+            return ProviderRateLimitError()
+        return e
+
+    def generate(self, inputs: ArtifactRequest) -> str:
+        try:
+            response = self._client().chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": self._construct_prompt(inputs)}],
+            )
+            return response.choices[0].message.content or ""
+        except Exception as e:
+            raise self._translate(e) from None
+
+    def validate(self) -> None:
+        try:
+            self._client().models.retrieve(self.model)
+        except Exception as e:
+            raise self._translate(e) from None
+
+
+class AnthropicProvider(AIProviderStrategy):
+    provider_id = "anthropic"
+
+    def _client(self):
+        import anthropic
+        return anthropic.Anthropic(api_key=self.api_key)
+
+    def _translate(self, e: Exception) -> Exception:
+        import anthropic
+        if isinstance(e, anthropic.AuthenticationError) or isinstance(e, anthropic.PermissionDeniedError):
+            return ProviderAuthError()
+        if isinstance(e, anthropic.RateLimitError):
+            return ProviderRateLimitError()
+        return e
+
+    def generate(self, inputs: ArtifactRequest) -> str:
+        try:
+            message = self._client().messages.create(
+                model=self.model,
+                max_tokens=2048,
+                messages=[{"role": "user", "content": self._construct_prompt(inputs)}],
+            )
+            return "".join(block.text for block in message.content if block.type == "text")
+        except Exception as e:
+            raise self._translate(e) from None
+
+    def validate(self) -> None:
+        try:
+            self._client().models.retrieve(self.model)
+        except Exception as e:
+            raise self._translate(e) from None
+
+
+PROVIDERS = {
+    "gemini": GeminiProvider,
+    "openai": OpenAIProvider,
+    "anthropic": AnthropicProvider,
+}
+
+
+def build_provider(
+    provider_id: Optional[str],
+    model: Optional[str],
+    api_key: Optional[str],
+) -> AIProviderStrategy:
+    """
+    Builds the provider for one request. User-supplied key wins; otherwise the
+    optional server-side Gemini key is used; otherwise the request is rejected.
+    """
+    if api_key:
+        api_key = api_key.strip()
+        if not api_key or len(api_key) > MAX_KEY_LENGTH:
+            raise HTTPException(status_code=400, detail="The API key looks malformed.")
+        pid = (provider_id or "gemini").strip().lower()
+        provider_cls = PROVIDERS.get(pid)
+        if not provider_cls:
+            raise HTTPException(status_code=400, detail=f"Unknown provider '{pid}'.")
+        if model:
+            model = model.strip()
+            if not MODEL_NAME_PATTERN.match(model):
+                raise HTTPException(status_code=400, detail="The model name looks malformed.")
+        return provider_cls(api_key=api_key, model=model or None)
+
+    if SERVER_GEMINI_KEY:
+        return GeminiProvider(api_key=SERVER_GEMINI_KEY)
+
+    raise HTTPException(
+        status_code=401,
+        detail="No API key configured. Open Settings (gear icon) and add your LLM API key.",
+    )
