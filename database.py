@@ -33,10 +33,18 @@ else:
         # We will use a default error message to prevent a crash
         raise ValueError("Database credentials are not fully set in the environment variables.")
         
-    DATABASE_URL = f"postgresql://{DB_USER}:{quote_plus(DB_PASSWORD)}@{DB_HOST}:{DB_PORT}/{DB_NAME}" 
+    DATABASE_URL = f"postgresql://{DB_USER}:{quote_plus(DB_PASSWORD)}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+
+# Force the psycopg v3 driver. requirements.txt ships psycopg (v3), but plain
+# "postgresql://" URLs make SQLAlchemy try to import psycopg2, which is not
+# installed - the app then crashes on startup before serving a single request.
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
+elif DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
 
 # Setup the database engine
-engine = create_engine(DATABASE_URL, echo=False) 
+engine = create_engine(DATABASE_URL, echo=False)
 
 # --- 1. Database Model ---
 class Artifact(SQLModel, table=True):
