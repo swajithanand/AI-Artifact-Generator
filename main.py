@@ -49,7 +49,8 @@ app = FastAPI(title="AI Artifact Generator Backend", lifespan=lifespan)
 
 # CORS Configuration
 origins = [
-    "https://ai-artifact-generator-swajiths-projects.vercel.app", # Vercel Live
+    "https://ai-artifact-generator.vercel.app", # Vercel public production domain
+    "https://ai-artifact-generator-swajiths-projects.vercel.app", # Vercel team alias
     "http://localhost:3000",   # Local Frontend
     "http://127.0.0.1:3000",   # Local Frontend (Alternate)
     #"http://localhost:8000",   # Local Backend
