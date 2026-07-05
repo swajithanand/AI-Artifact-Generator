@@ -4,7 +4,7 @@ import ArtifactGenerator from './components/ArtifactGenerator';
 
 function App() {
   return (
-    <div className="min-h-screen bg-black text-slate-200 font-sans">
+    <div className="min-h-screen bg-gray-50 text-gray-800 font-sans">
       <ArtifactGenerator />
     </div>
   );
