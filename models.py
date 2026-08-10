@@ -26,3 +26,6 @@ class StructuredArtifact(BaseModel):
 class ArtifactResponse(BaseModel):
     status: str
     artifact: StructuredArtifact
+    # Set when the artifact was generated but something non-fatal went wrong
+    # (e.g. history could not be saved). The artifact is still valid.
+    warning: Optional[str] = None

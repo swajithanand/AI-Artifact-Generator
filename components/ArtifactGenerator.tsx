@@ -90,6 +90,8 @@ const ArtifactGenerator: React.FC = () => {
     const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const [error, setError] = useState<string>('');
+    const [notice, setNotice] = useState<string>('');
+    const [historyUnavailable, setHistoryUnavailable] = useState<boolean>(false);
     const [copySuccess, setCopySuccess] = useState<string>('');
     const [llmSettings, setLlmSettings] = useState<LLMSettings | null>(() => loadLLMSettings());
     const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
@@ -123,8 +125,11 @@ const ArtifactGenerator: React.FC = () => {
                 content: item.artifact_data.raw_output,
             }));
             setHistory(mappedHistory);
+            setHistoryUnavailable(false);
         } catch (error) {
             console.error("Error fetching history:", error);
+            // Be honest in the UI: an unreachable history is not an empty history
+            setHistoryUnavailable(true);
         }
     }, []);
 
@@ -138,6 +143,7 @@ const ArtifactGenerator: React.FC = () => {
         if (!scenario || isLoading) return;
         setIsLoading(true);
         setError('');
+        setNotice('');
 
         try {
             const response = await fetch(`${API_BASE_URL}/generate-artifact`, {
@@ -163,6 +169,9 @@ const ArtifactGenerator: React.FC = () => {
 
             setGeneratedArtifact(data.artifact.raw_output);
             setSelectedHistoryId(null);
+            // Non-fatal backend warning (e.g. history unavailable) — the
+            // artifact above is still valid, so this is a notice, not an error.
+            setNotice(data.warning || '');
             await fetchHistory();
 
         } catch (error) {
@@ -357,6 +366,18 @@ const ArtifactGenerator: React.FC = () => {
                             </button>
                         </div>
                     )}
+                    {notice && !error && (
+                        <div className="mb-4 flex items-start justify-between bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg p-3" role="status">
+                            <span>{notice}</span>
+                            <button
+                                onClick={() => setNotice('')}
+                                aria-label="Dismiss notice"
+                                className="ml-3 font-bold text-amber-600 hover:text-amber-900"
+                            >
+                                &times;
+                            </button>
+                        </div>
+                    )}
                     <div className="relative flex-grow bg-gray-50 rounded-lg border border-gray-200 p-4 overflow-y-auto text-gray-800 text-sm">
                         {isLoading && (
                             <div className="absolute inset-0 bg-white/70 flex flex-col items-center justify-center rounded-lg z-10">
@@ -385,7 +406,11 @@ const ArtifactGenerator: React.FC = () => {
                 <div className="lg:col-span-2 bg-white p-6 rounded-xl shadow-lg flex flex-col">
                     <h2 className="text-lg font-semibold text-black mb-4 border-b border-gray-100 pb-3">History</h2>
                     <div className="overflow-y-auto space-y-3">
-                        {history.length === 0 && <p className="text-gray-500 text-sm">History is empty. Generate your first artifact!</p>}
+                        {history.length === 0 && (
+                            historyUnavailable
+                                ? <p className="text-amber-700 text-sm">History is unavailable right now. You can still generate artifacts — they just won't be saved.</p>
+                                : <p className="text-gray-500 text-sm">History is empty. Generate your first artifact!</p>
+                        )}
                         {history.map((item) => (
                             <button
                                 key={item.id}

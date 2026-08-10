@@ -143,10 +143,27 @@ def parse_raw_ai_output(artifact_type: str, raw_output: str) -> StructuredArtifa
 
 
 # --- ROUTES ---
-# Health check route
+# Health check route. Deliberately does NOT touch the database: this is the
+# platform health check, and a paused database must not cause restart loops.
 @app.get("/")
 def health_check():
     return {"status": "ok", "message": "AI Artifact Generator API is running"}
+
+
+# Diagnostic endpoint: reports whether the database is actually reachable.
+@app.get("/health/db")
+def health_db(session: Session = Depends(get_session)):
+    from sqlalchemy import text
+    try:
+        session.exec(text("SELECT 1"))
+        return {"database": "ok"}
+    except Exception as e:
+        logger.error("Database health check failed", exc_info=True)
+        return {
+            "database": "unreachable",
+            "hint": "If this is a free Supabase project it may be paused after inactivity — restore it in the Supabase dashboard.",
+            "error_type": type(e).__name__,
+        }
 
 # History endpoint
 @app.get("/history")
@@ -205,13 +222,27 @@ async def generate_artifact_route(
         logger.error("Artifact generation failed (provider %s)", provider.provider_id, exc_info=True)
         raise HTTPException(status_code=500, detail="Artifact generation failed. Please try again.")
 
+    # From here on the user's artifact exists and their LLM call is already paid
+    # for, so nothing below is allowed to throw it away. Parsing and persistence
+    # degrade gracefully instead.
     try:
         structured_artifact = parse_raw_ai_output(request.artifact_type, raw_ai_output)
-        persistence_service.save_artifact(request.artifact_type, structured_artifact)
-        return ArtifactResponse(status="success", artifact=structured_artifact)
     except Exception:
-        logger.error("Post-processing/persistence failed", exc_info=True)
-        raise HTTPException(status_code=500, detail="The artifact was generated but could not be saved. Please try again.")
+        logger.error("Failed to parse AI output; returning raw text", exc_info=True)
+        first_line = raw_ai_output.strip().split("\n")[0].lstrip("# ").strip()
+        structured_artifact = StructuredArtifact(
+            title=first_line[:120] or f"Generated {request.artifact_type}",
+            raw_output=raw_ai_output,
+        )
+
+    warning = None
+    try:
+        persistence_service.save_artifact(request.artifact_type, structured_artifact)
+    except Exception:
+        logger.error("Could not save artifact to history; returning it anyway", exc_info=True)
+        warning = "Your artifact was generated, but history is unavailable right now so it was not saved."
+
+    return ArtifactResponse(status="success", artifact=structured_artifact, warning=warning)
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8080))
