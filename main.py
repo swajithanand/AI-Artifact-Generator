@@ -6,12 +6,16 @@ import logging
 from typing import Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, Depends, Header, HTTPException
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlmodel import Session, select
 from contextlib import asynccontextmanager
 
 from models import ArtifactRequest, ArtifactResponse, StructuredArtifact
 from strategies import build_provider, ProviderAuthError, ProviderRateLimitError
+from prompts import build_prompt, UnsupportedArtifactTypeError, MissingArtifactInputError
 from database import create_db_and_tables, get_session, Artifact
 
 # --- INITIALIZATION AND CONFIGURATION ---
@@ -67,6 +71,21 @@ app.add_middleware(
 )
 
 
+# --- VALIDATION ERROR HANDLING ---
+# An artifact_type outside the schema is rejected by pydantic before reaching
+# the route, so translate that specific case into the friendly message rather
+# than leaking a raw schema error to the UI.
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request, exc: RequestValidationError):
+    for error in exc.errors():
+        if "artifact_type" in error.get("loc", ()):
+            return JSONResponse(
+                status_code=400,
+                content={"detail": "Unsupported artifact type. Please select Epic, Feature, or User Story."},
+            )
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(exc.errors())})
+
+
 # --- PERSISTENCE SERVICE (NO CHANGE) ---
 class PersistenceService:
     def __init__(self, session: Session = Depends(get_session)):
@@ -88,46 +107,131 @@ class PersistenceService:
         results = self.session.exec(statement).all()
         return results
 
-# --- PARSING LOGIC (NO CHANGE) ---
+# --- PARSING LOGIC ---
+# Kept in sync with the templates in prompts.py: each artifact type emits its
+# own set of "## " sections, so parsing is section-driven rather than one big
+# regex per artifact.
+
+_SECTION_RE = re.compile(r"^##+\s*(.+?)\s*:?\s*$", re.MULTILINE)
+_TITLE_RE = re.compile(r"^#(?!#)\s*(.+?)\s*$", re.MULTILINE)
+_TITLE_PREFIX_RE = re.compile(r"^(?:epic|feature|user\s*story|bug)?\s*title\s*:\s*", re.IGNORECASE)
+_BULLET_RE = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+")
+
+
+def _normalise_heading(heading: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", heading.lower()).strip()
+
+
+def _split_sections(raw_output: str) -> dict:
+    """Splits markdown '## Heading' blocks into {normalised heading: body}."""
+    sections = {}
+    matches = list(_SECTION_RE.finditer(raw_output))
+    for index, match in enumerate(matches):
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(raw_output)
+        sections[_normalise_heading(match.group(1))] = raw_output[start:end].strip()
+    return sections
+
+
+def _section(sections: dict, *candidates: str) -> str:
+    """Looks up a section by any of several heading spellings, exact then partial."""
+    keys = [_normalise_heading(c) for c in candidates]
+    for key in keys:
+        if key in sections:
+            return sections[key]
+    for key in keys:
+        for heading, body in sections.items():
+            if key and key in heading:
+                return body
+    return ""
+
+
+def _bullets(text: str) -> list:
+    """
+    Extracts list items. Handles '-', '*' and numbered bullets, and falls back to
+    blank-line separated blocks so multi-line Given/When/Then criteria survive.
+    """
+    if not text.strip():
+        return []
+
+    items, current = [], []
+    for line in text.splitlines():
+        if _BULLET_RE.match(line):
+            if current:
+                items.append("\n".join(current).strip())
+            current = [_BULLET_RE.sub("", line).strip()]
+        elif current and line.strip():
+            current.append(line.strip())
+        elif current:
+            items.append("\n".join(current).strip())
+            current = []
+    if current:
+        items.append("\n".join(current).strip())
+
+    if not items:
+        items = [block.strip() for block in re.split(r"\n\s*\n", text) if block.strip()]
+
+    return [item for item in items if item]
+
+
+def _extract_title(raw_output: str, artifact_type: str) -> str:
+    match = _TITLE_RE.search(raw_output)
+    title = match.group(1).strip() if match else raw_output.strip().split("\n")[0].strip()
+    title = _TITLE_PREFIX_RE.sub("", title).strip().strip("#").strip()
+    return title or f"Generated {artifact_type}"
+
+
 def parse_raw_ai_output(artifact_type: str, raw_output: str) -> StructuredArtifact:
     """Parses raw text into a structured Pydantic model with safe checks."""
-    
-    def find_content(start_pattern, end_pattern=None):
-        start_match = re.search(start_pattern, raw_output, re.DOTALL | re.IGNORECASE)
-        if not start_match: return ""
-        start_pos = start_match.end()
-        if end_pattern:
-            end_match = re.search(end_pattern, raw_output[start_pos:], re.DOTALL | re.IGNORECASE)
-            end_pos = start_pos + end_match.start() if end_match else len(raw_output)
-        else:
-            end_pos = len(raw_output)
-        return raw_output[start_pos:end_pos].strip()
 
-    title_match = re.search(r"#(.*?)(?=\n|$)", raw_output)
-    title = title_match.group(1).strip() if title_match else raw_output.split('\n')[0].strip().replace('Title:', '')
+    title = _extract_title(raw_output, artifact_type)
+    sections = _split_sections(raw_output)
 
     if artifact_type == "User Story":
-        us_match = re.search(r"User Story: (.*?)(?=Acceptance Criteria:|Definition of Done:|$)", raw_output, re.DOTALL)
-        ac_match = re.search(r"Acceptance Criteria: (.*?)(?=Definition of Done:|$)", raw_output, re.DOTALL)
-        user_story_text = us_match.group(1).strip() if us_match else ""
-        ac_text = ac_match.group(1).strip() if ac_match else ""
-        acceptance_criteria = [line.strip().lstrip('-').strip() for line in ac_text.split('\n') if line.strip()]
-        if not title_match: title = user_story_text.split('.')[0].split(':')[0].strip() if user_story_text else f"Generated {artifact_type}"
-        return StructuredArtifact(title=title, userStoryText=user_story_text, acceptanceCriteria=acceptance_criteria, raw_output=raw_output)
+        user_story_text = _section(sections, "User Story")
+        description = _section(sections, "Description")
+        acceptance_criteria = _bullets(_section(sections, "Acceptance Criteria"))
+        return StructuredArtifact(
+            title=title,
+            description=description or None,
+            userStoryText=user_story_text,
+            acceptanceCriteria=acceptance_criteria,
+            raw_output=raw_output,
+        )
 
     elif artifact_type == "Epic":
-        description = find_content(r"## Description of the Epic:", r"## Elevator Pitch")
-        pitch = find_content(r"## Elevator Pitch \(Epic Hypothesis Statement\):")
-        full_description = f"## Description\n{description}\n\n## Elevator Pitch\n{pitch}"
-        return StructuredArtifact(title=title, description=full_description, raw_output=raw_output)
-        
+        pitch = _section(sections, "Elevator Pitch")
+        outcomes = _section(sections, "Business Outcomes")
+        indicators = _section(sections, "Leading Indicators")
+        summary = _section(sections, "Epic Summary")
+        full_description = (
+            f"## Elevator Pitch\n{pitch}\n\n"
+            f"## Business Outcomes\n{outcomes}\n\n"
+            f"## Epic Summary\n{summary}"
+        )
+        return StructuredArtifact(
+            title=title,
+            description=full_description,
+            keyFeatures=_bullets(indicators) or None,
+            raw_output=raw_output,
+        )
+
     elif artifact_type == "Feature":
-        problem = find_content(r"## Problem Statement:", r"## Feature Hypothesis")
-        hypothesis = find_content(r"## Feature Hypothesis:", r"## Acceptance Criteria")
-        ac_text = find_content(r"## Acceptance Criteria:")
-        acceptance_criteria = [line.strip().lstrip('0123456789.- ').strip() for line in ac_text.split('\n') if line.strip()]
-        full_description = f"## Problem Statement\n{problem}\n\n## Feature Hypothesis\n{hypothesis}"
-        return StructuredArtifact(title=title, description=full_description, acceptanceCriteria=acceptance_criteria, raw_output=raw_output)
+        benefit = _section(sections, "Feature Benefit Statement")
+        description = _section(sections, "Description")
+        outcome = _section(sections, "Business User Outcome", "Business Outcome", "User Outcome")
+        acceptance_criteria = _bullets(_section(sections, "Acceptance Criteria"))
+        full_description = (
+            f"## Feature Benefit Statement\n{benefit}\n\n"
+            f"## Description\n{description}\n\n"
+            f"## Business / User Outcome\n{outcome}"
+        )
+        return StructuredArtifact(
+            title=title,
+            description=full_description,
+            acceptanceCriteria=acceptance_criteria,
+            raw_output=raw_output,
+        )
 
     elif artifact_type == "Bug":
         title_bug_match = re.search(r"Title:(.*?)(?=\n|$)", raw_output)
@@ -208,10 +312,25 @@ async def generate_artifact_route(
     x_llm_key: Optional[str] = Header(default=None),
 ):
     provider = build_provider(x_llm_provider, x_llm_model, x_llm_key)
+
+    # Validate inputs and prompt routing BEFORE calling the LLM, so a bad
+    # request fails fast with a clear message instead of burning a paid call.
+    try:
+        build_prompt(
+            artifact_type=request.artifact_type,
+            business_use_case=request.business_use_case,
+            persona=request.persona,
+            technical_info=request.technical_info,
+        )
+    except (UnsupportedArtifactTypeError, MissingArtifactInputError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
     logger.info("Generating %s via %s", request.artifact_type, provider.provider_id)
 
     try:
         raw_ai_output = provider.generate(request)
+    except (UnsupportedArtifactTypeError, MissingArtifactInputError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except ProviderAuthError:
         raise HTTPException(status_code=401, detail="Your API key was rejected by the provider. Check it in Settings (gear icon).")
     except ProviderRateLimitError:

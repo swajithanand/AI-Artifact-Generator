@@ -160,8 +160,8 @@ const ArtifactGenerator: React.FC = () => {
             const data = await response.json();
 
             if (!response.ok) {
-                // 401/429 carry curated, user-friendly messages from our backend
-                if ((response.status === 401 || response.status === 429) && data.detail) {
+                // 400/401/429 carry curated, user-friendly messages from our backend
+                if ([400, 401, 429].includes(response.status) && data.detail) {
                     throw new UserFacingError(data.detail);
                 }
                 throw new Error(data.detail || `HTTP error! Status: ${response.status}`);

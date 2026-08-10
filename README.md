@@ -102,6 +102,27 @@ classDiagram
     build_provider ..> AIProviderStrategy : creates per request
 ```
 
+### Artifact-specific prompts
+
+Each artifact type has its own dedicated prompt template in [prompts.py](prompts.py) — there is no single generic prompt with the type substituted in, because Epic, Feature and User Story sit at different levels of abstraction.
+
+```mermaid
+flowchart LR
+    S["Artifact type<br/>selected in UI"] --> R{"build_prompt()<br/>router"}
+    R -- Epic --> E["generate_epic_prompt<br/>Elevator Pitch · Business Outcomes<br/>Leading Indicators · NFRs · Summary"]
+    R -- Feature --> F["generate_feature_prompt<br/>Benefit Statement · Description<br/>Outcome · Acceptance Criteria · NFRs"]
+    R -- User Story --> U["generate_user_story_prompt<br/>As a/I want/so that · Description<br/>Acceptance Criteria · DoD"]
+    R -- unknown --> X["400 Unsupported artifact type"]
+```
+
+Every template carries explicit anti-contamination rules (an Epic must not contain Features or User Stories, and so on) and a shared set of quality rules. The response parser in `main.py` is section-driven and kept in sync with these templates.
+
+Run the prompt/parser tests with:
+
+```bash
+python test_artifact_prompts.py
+```
+
 ### Security model
 
 - The user's API key lives only in their browser (`localStorage`, or `sessionStorage` when "remember" is off) and travels only as an HTTPS request header — never in a URL, never in the database, never in logs.

@@ -11,6 +11,7 @@ from typing import Optional
 from fastapi import HTTPException
 
 from models import ArtifactRequest
+from prompts import build_prompt
 
 # Server-side fallback key (optional). If unset, users must bring their own key.
 SERVER_GEMINI_KEY = os.getenv("GEMINI_API_KEY")
@@ -49,22 +50,13 @@ class AIProviderStrategy(ABC):
         """Cheap call that raises ProviderAuthError if the key is bad."""
 
     def _construct_prompt(self, inputs: ArtifactRequest) -> str:
-        prompt = f"""
-        You are an expert Agile Product Owner. Your task is to generate a comprehensive {inputs.artifact_type}
-        based on the provided details. Output the artifact in a format that is easy to parse.
-
-        [INSTRUCTIONS]
-        - Title: Be concise and descriptive.
-        - For a User Story: Use the format "As a... I want... so that..." and separate Acceptance Criteria (AC).
-        - The response MUST start with a line containing the artifact's Title (e.g., "# Epic Title: ...")
-
-        [USER INPUTS]
-        - ARTIFACT TYPE: {inputs.artifact_type}
-        - BUSINESS CASE: {inputs.business_use_case}
-        - PERSONA: {inputs.persona}
-        - TECHNICAL CONTEXT: {inputs.technical_info}
-        """
-        return prompt
+        """Routes the artifact type to its dedicated prompt template."""
+        return build_prompt(
+            artifact_type=inputs.artifact_type,
+            business_use_case=inputs.business_use_case,
+            persona=inputs.persona,
+            technical_info=inputs.technical_info,
+        )
 
 
 def _classify_status(status_code: Optional[int]) -> Optional[Exception]:
